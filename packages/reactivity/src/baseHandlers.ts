@@ -107,7 +107,7 @@ function createGetter(isReadonly = false, shallow = false) {
     if (!isReadonly && targetIsArray && hasOwn(arrayInstrumentations, key)) {
       return Reflect.get(arrayInstrumentations, key, receiver)
     }
-
+    // Reflect 保证this指向的是proxy对象
     const res = Reflect.get(target, key, receiver)
 
     if (isSymbol(key) ? builtInSymbols.has(key) : isNonTrackableKeys(key)) {
@@ -128,6 +128,7 @@ function createGetter(isReadonly = false, shallow = false) {
       return shouldUnwrap ? res.value : res
     }
 
+    // 如果 res 是对象，则响应式处理一下。相当于懒式递归，继续响应式化其源对象的属性
     if (isObject(res)) {
       // Convert returned value into a proxy as well. we do the isObject check
       // here to avoid invalid value warning. Also need to lazy access readonly
@@ -176,6 +177,7 @@ function createSetter(shallow = false) {
       if (!hadKey) {
         trigger(target, TriggerOpTypes.ADD, key, value)
       } else if (hasChanged(value, oldValue)) {
+        // value, oldValue不一样，更新
         trigger(target, TriggerOpTypes.SET, key, value, oldValue)
       }
     }
