@@ -16,6 +16,8 @@ import { ComputedRefImpl } from './computed'
 // which maintains a Set of subscribers, but we simply store them as
 // raw Sets to reduce memory overhead.
 type KeyToDepMap = Map<any, Dep>
+// 用于做依赖收集，一个effect可以对应多个属性，一个属性也可以对应多个effect
+// WeakMap = {target: Map:{key: Set}}
 const targetMap = new WeakMap<any, KeyToDepMap>()
 
 // The number of effects currently being tracked recursively.
@@ -94,7 +96,7 @@ export class ReactiveEffect<T = any> {
     }
     try {
       this.parent = activeEffect
-      // 这里依赖收集，核心就是将当前的 effect 和稍后渲染的属性关联在一起
+      // 这里依赖收集，核心就是将当前的 effect 和稍后渲染的属性关联在一起（通过activeEffect这个全局变量）
       activeEffect = this
       shouldTrack = true
 
@@ -134,10 +136,11 @@ export class ReactiveEffect<T = any> {
 }
 
 function cleanupEffect(effect: ReactiveEffect) {
-  // activeEffect.deps -> [(name->Set), (age->Set)]
+  // effect.deps -> [(name->Set), (age->Set)]
   const { deps } = effect
   if (deps.length) {
     for (let i = 0; i < deps.length; i++) {
+      // 遍历数组，得到数组项是Set，在Set中删除当前这个effect.
       deps[i].delete(effect)
     }
     deps.length = 0
@@ -169,14 +172,14 @@ export function effect<T = any>(
   if ((fn as ReactiveEffectRunner).effect) {
     fn = (fn as ReactiveEffectRunner).effect.fn
   }
-
+  // 创建响应式 effect.
   const _effect = new ReactiveEffect(fn)
   if (options) {
     extend(_effect, options)
     if (options.scope) recordEffectScope(_effect, options.scope)
   }
   if (!options || !options.lazy) {
-    _effect.run()
+    _effect.run() // 默认先执行一次，进行依赖收集
   }
   const runner = _effect.run.bind(_effect) as ReactiveEffectRunner
   runner.effect = _effect
@@ -205,6 +208,8 @@ export function resetTracking() {
   shouldTrack = last === undefined ? true : last
 }
 
+// 收集依赖. 对象的某个属性 -> 多个effect.
+// WeakMap = {target: Map:{key: Set}}。WeakMap的key必须是对象，Set可以去重。
 export function track(target: object, type: TrackOpTypes, key: unknown) {
   if (shouldTrack && activeEffect) {
     let depsMap = targetMap.get(target)
@@ -213,6 +218,7 @@ export function track(target: object, type: TrackOpTypes, key: unknown) {
     }
     let dep = depsMap.get(key)
     if (!dep) {
+      // createDep() 返回一个空集合
       depsMap.set(key, (dep = createDep()))
     }
 
@@ -240,6 +246,9 @@ export function trackEffects(
   }
 
   if (shouldTrack) {
+    // 单向记录指的是属性记录了effect，反向记录应该让effect也记录它被哪些属性收集过，这样做的好处是方便清理。
+    // dep里有activeEffect,activeEffect的deps属性里也有dep，互相记录.
+    // activeEffect.deps -> [(name->Set), (age->Set)]
     dep.add(activeEffect!)
     activeEffect!.deps.push(dep)
     if (__DEV__ && activeEffect!.onTrack) {
@@ -255,6 +264,7 @@ export function trackEffects(
   }
 }
 
+// 响应式数据发生变化，触发更新对应收集的ReactiveEffect
 export function trigger(
   target: object,
   type: TriggerOpTypes,
@@ -337,6 +347,7 @@ export function trigger(
     if (__DEV__) {
       triggerEffects(createDep(effects), eventInfo)
     } else {
+      // createDep拷贝一份effect[]，新effects和原来的effects内存地址已经不同，但是里边一个一个的effect元素的指向还是保持一致。避免集合遍历时的边删除边添加的操作，导致的死循环！
       triggerEffects(createDep(effects))
     }
   }
@@ -352,6 +363,7 @@ export function triggerEffects(
       if (__DEV__ && effect.onTrigger) {
         effect.onTrigger(extend({ effect }, debuggerEventExtraInfo))
       }
+      // 如果用户传入了调度函数，则执行调度函数，否则默认执行run方法
       if (effect.scheduler) {
         effect.scheduler()
       } else {
