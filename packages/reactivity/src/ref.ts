@@ -27,7 +27,7 @@ type RefBase<T> = {
   dep?: Dep
   value: T
 }
-
+// ref的依赖收集，RefImpl.dep = Set<effect>
 export function trackRefValue(ref: RefBase<any>) {
   if (shouldTrack && activeEffect) {
     ref = toRaw(ref)
@@ -42,7 +42,7 @@ export function trackRefValue(ref: RefBase<any>) {
     }
   }
 }
-
+// ref的响应式触发更新
 export function triggerRefValue(ref: RefBase<any>, newVal?: any) {
   ref = toRaw(ref)
   if (ref.dep) {
@@ -102,6 +102,7 @@ class RefImpl<T> {
 
   constructor(value: T, public readonly __v_isShallow: boolean) {
     this._rawValue = __v_isShallow ? value : toRaw(value)
+    // toReactive方法会将Object类型的数据reactive化返回，其他类型直接返回value
     this._value = __v_isShallow ? value : toReactive(value)
   }
 
@@ -201,6 +202,7 @@ export function toRefs<T extends object>(object: T): ToRefs<T> {
   return ret
 }
 
+// 仅仅是做了一层访问代理
 class ObjectRefImpl<T extends object, K extends keyof T> {
   public readonly __v_isRef = true
 
@@ -211,11 +213,13 @@ class ObjectRefImpl<T extends object, K extends keyof T> {
   ) {}
 
   get value() {
+    // _object 是一个 Proxy 对象，故此处读取 this._object[this.key] 会收集依赖。
     const val = this._object[this._key]
     return val === undefined ? (this._defaultValue as T[K]) : val
   }
 
   set value(newVal) {
+    // _object 是一个 Proxy 对象，故此处修改 this._object[this.key] 会触发更新。
     this._object[this._key] = newVal
   }
 }
